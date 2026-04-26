@@ -81,7 +81,7 @@ function Navbar() {
             <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-cyan-400" style={{background:"rgba(0,212,255,0.2)"}}>A</div>
             <span className="text-[11px] font-mono text-slate-400 hidden sm:block">ADMIN</span>
           </div>
-          <a href="/login" className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 hover:text-red-400 transition-colors">
+          <a href="/logout" className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 hover:text-red-400 transition-colors">
             <LogOut size={13}/><span className="hidden sm:block">LOGOUT</span>
           </a>
           <button className="lg:hidden text-slate-400" onClick={()=>setMenuOpen(!menuOpen)}>
@@ -347,8 +347,8 @@ function ActiveAttackers() {
   const [toast,setToast]         = useState<{msg:string;type:"success"|"error"}|null>(null);
 
   const load = useCallback(async()=>{
-    const d = await apiFetch<{attackers:Attacker[]}>("/attackers");
-    if(d) setAttackers(d.attackers);
+    const d = await apiFetch<{attackers:Attacker[]}>("/attackers/full");
+    if(d?.attackers) setAttackers(d.attackers);
     setLoading(false);
   },[]);
 
@@ -439,13 +439,26 @@ function SignatureDatabase() {
   const PER = 8;
 
   const load = useCallback(async()=>{
-    const d = await apiFetch<{rules:SigRule[]}>("/signatures");
-    if(d){ setRules(d.rules); } setLoading(false);
-  },[]);
+  const d = await apiFetch<any[]>("/signatures");
+  if(Array.isArray(d)){
+    setRules(d.map(r=>({
+      id:           r.id,
+      name:         r.name,
+      category:     r.category,
+      severity:     r.severity,
+      protocol:     r.protocol,
+      action:       r.action,
+      status:       r.enabled ? "Active" : "Inactive",
+      lastTriggered: r.updated_at?.slice(0,16).replace("T"," ") ?? "Never",
+      hits:         0,
+    })));
+  }
+  setLoading(false);
+},[]);
 
   useEffect(()=>{ load(); },[load]);
 
-  const filtered = rules.filter(r=>{
+  const filtered = (rules||[]).filter(r=>{
     if(search&&!r.name.toLowerCase().includes(search.toLowerCase())&&!r.id.includes(search)) return false;
     if(sevF!=="All"&&r.severity!==sevF)  return false;
     if(actF!=="All"&&r.action!==actF)    return false;
@@ -509,7 +522,7 @@ function SignatureDatabase() {
                   </tr>
                 </thead>
                 <tbody>
-                  {paged.map(r=>(
+                  {(paged||[]).map(r=>(
                     <tr key={r.id} className="border-b hover:bg-white/[0.02] transition-colors" style={{borderColor:"rgba(0,212,255,0.05)"}}>
                       <td className="py-2 px-2 text-cyan-400">{r.id}</td>
                       <td className="py-2 px-2 text-slate-200">{r.name}</td>
@@ -664,8 +677,9 @@ function RansomwareRules() {
   const [toast,setToast]     = useState<{msg:string;type:"success"|"error"}|null>(null);
 
   const load = useCallback(async()=>{
-    const d = await apiFetch<{rules:RansomRule[]}>("/ransomware/rules");
-    if(d){ setRules(d.rules); } setLoading(false);
+     const d = await apiFetch<RansomRule[]>("/ransomware/rules");
+     if(Array.isArray(d)) setRules(d);
+     setLoading(false);
   },[]);
 
   useEffect(()=>{ load(); },[load]);
@@ -790,8 +804,9 @@ function ChangeLogTable() {
   const PER = 8;
 
   const load = useCallback(async()=>{
-    const d = await apiFetch<{logs:ChangeLog[]}>("/changelog?limit=100");
-    if(d){ setLogs(d.logs); } setLoading(false);
+    const d = await apiFetch<{changelog:any[]}>("/changelog?limit=100");
+     if(d?.changelog) setLogs(d.changelog);
+     setLoading(false);
   },[]);
 
   useEffect(()=>{ load(); },[load]);
