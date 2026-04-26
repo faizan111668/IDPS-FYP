@@ -170,7 +170,7 @@ function LogFeed() {
 
 // --- Main Login Page ---
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -205,23 +205,37 @@ export default function LoginPage() {
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email || !password) {
-      setError("All fields are required.");
+  e.preventDefault();
+  if (!username || !password) {
+    setError("All fields are required.");
+    return;
+  }
+  setError("");
+  setLoading(true);
+  try {
+    const res = await fetch("http://localhost:8000/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.detail || "ACCESS DENIED — Invalid credentials.");
+      setLoading(false);
       return;
     }
-    setError("");
-    setLoading(true);
-    // Simulate API call — replace with real auth
-    setTimeout(() => {
-      setLoading(false);
-      if (email === "admin@idps.local" && password === "admin123") {
-        window.location.href = "/dashboard";
-      } else {
-        setError("ACCESS DENIED — Invalid credentials.");
-      }
-    }, 1800);
-  };
+    // Store in both localStorage AND cookie (cookie for middleware, localStorage for API calls)
+    localStorage.setItem("token", data.access_token);
+    localStorage.setItem("user", JSON.stringify(data.user));
+
+    // Set cookie for middleware protection
+    document.cookie = `token=${data.access_token}; path=/; max-age=${8 * 60 * 60}; SameSite=Lax`;
+    window.location.href = "/dashboard";
+  } catch {
+    setError("CONNECTION FAILED — Backend unreachable.");
+    setLoading(false);
+  }
+};
 
   return (
     <div className="min-h-screen grid-bg flex items-center justify-center p-4 relative overflow-hidden">
@@ -411,15 +425,15 @@ export default function LoginPage() {
             {/* Email */}
             <div className="animate-slide-up" style={{ animationDelay: "300ms", animationFillMode: "forwards", opacity: 0 }}>
               <label className="block text-[10px] font-mono text-slate-500 tracking-widest uppercase mb-1.5">
-                Operator ID / Email
+                Username
               </label>
               <div className="relative">
                 <User size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-cyan-400 opacity-60" />
                 <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@idps.local"
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="admin"
                   className="cyber-input w-full pl-9 pr-4 py-3 rounded text-sm"
                   autoComplete="email"
                 />
@@ -479,7 +493,7 @@ export default function LoginPage() {
             <div className="text-center animate-slide-up"
               style={{ animationDelay: "520ms", animationFillMode: "forwards", opacity: 0 }}>
               <p className="text-[10px] font-mono text-slate-600">
-                Demo: <span className="text-slate-500">admin@idps.local</span> / <span className="text-slate-500">admin123</span>
+                Demo: <span className="text-slate-500">admin</span> / <span className="text-slate-500">admin123</span>
               </p>
             </div>
           </form>

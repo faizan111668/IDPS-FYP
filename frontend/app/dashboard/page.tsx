@@ -125,7 +125,7 @@ function Navbar({ active, setActive, backendOnline }: { active: string; setActiv
               style={{ background: "rgba(0,212,255,0.2)" }}>A</div>
             <span className="text-[11px] font-mono text-slate-400 hidden sm:block">ADMIN</span>
           </div>
-          <button onClick={() => (window.location.href = "/login")}
+          <button onClick={() => (window.location.href = "/logout")}
             className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 hover:text-red-400 transition-colors">
             <LogOut size={13} /><span className="hidden sm:block">LOGOUT</span>
           </button>

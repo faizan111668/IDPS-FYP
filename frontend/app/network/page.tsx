@@ -105,7 +105,7 @@ function Navbar({ wsConnected }:{ wsConnected:boolean }) {
               style={{background:"rgba(0,212,255,0.2)"}}>A</div>
             <span className="text-[11px] font-mono text-slate-400 hidden sm:block">ADMIN</span>
           </div>
-          <a href="/login" className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 hover:text-red-400 transition-colors">
+          <a href="/logout" className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 hover:text-red-400 transition-colors">
             <LogOut size={13}/><span className="hidden sm:block">LOGOUT</span>
           </a>
           <button className="lg:hidden text-slate-400" onClick={()=>setMenuOpen(!menuOpen)}>
@@ -642,6 +642,241 @@ function Toast({msg,type,onClose}:{msg:string;type:"success"|"error";onClose:()=
 const DEFAULT_STATS:Stats={total_packets:0,pps:0,bandwidth:0,upload:0,download:0,active_connections:0,threats_detected:0,threats_blocked:0};
 const DEFAULT_HEALTH:Health={cpu:0,mem:0,pkt_loss:0,latency:0};
 
+
+// ══════════════════════════════════════════════════════════════
+// WIRESHARK-STYLE LIVE PACKET TABLE
+// ══════════════════════════════════════════════════════════════
+interface Packet {
+  id: number; src_ip: string; dst_ip: string; protocol: string;
+  port: number; length: number; status: string; flagged: boolean; timestamp: string;
+}
+
+const PROTO_COLORS: Record<string, { bg: string; color: string }> = {
+  HTTPS:    { bg: "rgba(167,139,250,0.15)", color: "#a78bfa" },
+  HTTP:     { bg: "rgba(249,115,22,0.15)",  color: "#f97316" },
+  DNS:      { bg: "rgba(255,190,11,0.15)",  color: "#ffbe0b" },
+  TCP:      { bg: "rgba(0,212,255,0.15)",   color: "#00d4ff" },
+  UDP:      { bg: "rgba(0,255,159,0.15)",   color: "#00ff9f" },
+  SSH:      { bg: "rgba(255,0,110,0.15)",   color: "#ff006e" },
+  ICMP:     { bg: "rgba(148,163,184,0.15)", color: "#94a3b8" },
+  MySQL:    { bg: "rgba(255,126,0,0.15)",   color: "#ff7e00" },
+  OTHER:    { bg: "rgba(100,116,139,0.12)", color: "#64748b" },
+};
+
+function getProtoStyle(proto: string, flagged: boolean) {
+  if (flagged) return { bg: "rgba(255,0,110,0.18)", color: "#ff006e" };
+  return PROTO_COLORS[proto] || PROTO_COLORS.OTHER;
+}
+
+function getInfo(pkt: Packet): string {
+  const port = pkt.port;
+  if (pkt.flagged)           return `⚠ FLAGGED — ${pkt.status} on port ${port}`;
+  if (pkt.protocol === "DNS")    return `DNS query on port ${port}`;
+  if (pkt.protocol === "HTTPS")  return `TLS encrypted — port ${port}`;
+  if (pkt.protocol === "HTTP")   return `HTTP request — port ${port}`;
+  if (pkt.protocol === "SSH")    return `SSH session — port ${port}`;
+  if (pkt.protocol === "TCP")    return `TCP segment — port ${port}`;
+  if (pkt.protocol === "UDP")    return `UDP datagram — port ${port}`;
+  return `${pkt.protocol} — port ${port}`;
+}
+
+function PacketTable() {
+  const [packets, setPackets]       = useState<Packet[]>([]);
+  const [paused, setPaused]         = useState(false);
+  const [protoF, setProtoF]         = useState("All");
+  const [search, setSearch]         = useState("");
+  const [selected, setSelected]     = useState<Packet | null>(null);
+  const [loading, setLoading]       = useState(true);
+  const tableRef                    = useRef<HTMLDivElement>(null);
+  const pausedRef                   = useRef(false);
+  const MAX_ROWS                    = 200;
+
+  // Initial load from DB
+  useEffect(() => {
+    fetch("http://localhost:8000/api/network/packets?limit=50")
+      .then(r => r.json())
+      .then(d => {
+        if (d?.packets) setPackets(d.packets);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  // Poll for new packets every 3 seconds
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      if (pausedRef.current) return;
+      try {
+        const res  = await fetch("http://localhost:8000/api/network/packets?limit=10");
+        const data = await res.json();
+        if (!data?.packets?.length) return;
+        setPackets(prev => {
+          const existingIds = new Set(prev.map(p => p.id));
+          const newPkts = data.packets.filter((p: Packet) => !existingIds.has(p.id));
+          if (!newPkts.length) return prev;
+          const merged = [...newPkts, ...prev].slice(0, MAX_ROWS);
+          return merged;
+        });
+        // Auto-scroll to top ONLY if user is already at top
+        if (tableRef.current && !pausedRef.current) {
+          if (tableRef.current.scrollTop < 100) {
+            tableRef.current.scrollTop = 0;
+          }
+        }
+      } catch {}
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const togglePause = () => {
+    pausedRef.current = !pausedRef.current;
+    setPaused(p => !p);
+  };
+
+  const filtered = packets.filter(p => {
+    if (protoF !== "All" && p.protocol !== protoF) return false;
+    if (search && !p.src_ip.includes(search) && !p.dst_ip.includes(search)) return false;
+    return true;
+  });
+
+  const protocols = ["All", "HTTPS", "HTTP", "TCP", "UDP", "DNS", "SSH", "ICMP"];
+
+  return (
+    <div className="rounded overflow-hidden" style={{ background: "rgba(6,8,18,0.98)", border: "1px solid rgba(0,212,255,0.15)" }}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: "rgba(0,212,255,0.1)", background: "rgba(0,212,255,0.03)" }}>
+        <div className="flex items-center gap-2">
+          <Activity size={14} className="text-cyan-400" />
+          <span className="text-[12px] font-mono font-bold text-slate-200 tracking-wider">LIVE PACKET CAPTURE</span>
+          <span className="text-[10px] font-mono text-slate-600 ml-1">Wireshark-style</span>
+          <div className={`w-2 h-2 rounded-full ml-2 ${paused ? "bg-yellow-400" : "bg-green-400 animate-pulse"}`} />
+          <span className="text-[10px] font-mono" style={{ color: paused ? "#ffbe0b" : "#00ff9f" }}>
+            {paused ? "PAUSED" : "LIVE"}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {/* Search */}
+          <div className="relative">
+            <Search size={10} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Filter IP..."
+              className="pl-6 pr-2 py-1 rounded text-[10px] font-mono outline-none w-32"
+              style={{ background: "rgba(0,212,255,0.05)", border: "1px solid rgba(0,212,255,0.15)", color: "#cbd5e1" }} />
+          </div>
+          {/* Protocol filter */}
+          <select value={protoF} onChange={e => setProtoF(e.target.value)}
+            className="px-2 py-1 rounded text-[10px] font-mono outline-none"
+            style={{ background: "#0a0f1e", border: "1px solid rgba(0,212,255,0.15)", color: "#00d4ff" }}>
+            {protocols.map(p => <option key={p}>{p}</option>)}
+          </select>
+          {/* Pause/Resume */}
+          <button onClick={togglePause}
+            className="flex items-center gap-1 px-3 py-1 rounded text-[10px] font-mono transition-colors"
+            style={{
+              border: `1px solid ${paused ? "rgba(255,190,11,0.4)" : "rgba(0,212,255,0.3)"}`,
+              color: paused ? "#ffbe0b" : "#00d4ff",
+              background: paused ? "rgba(255,190,11,0.08)" : "rgba(0,212,255,0.06)",
+            }}>
+            {paused ? "▶ RESUME" : "⏸ PAUSE"}
+          </button>
+          <span className="text-[10px] font-mono text-slate-600">{filtered.length} packets</span>
+        </div>
+      </div>
+
+      {/* Column headers */}
+      <div className="grid text-[10px] font-mono text-slate-500 px-2 py-1.5 border-b"
+        style={{ gridTemplateColumns: "50px 140px 140px 70px 55px 65px 1fr", borderColor: "rgba(0,212,255,0.08)", background: "rgba(0,0,0,0.3)" }}>
+        <span>No.</span>
+        <span>Source IP</span>
+        <span>Destination IP</span>
+        <span>Protocol</span>
+        <span>Port</span>
+        <span>Length</span>
+        <span>Info</span>
+      </div>
+
+      {/* Packet rows */}
+      <div ref={tableRef} className="overflow-y-auto" style={{ height: "380px" }}>
+        {loading ? (
+          <div className="flex items-center justify-center h-full text-[11px] font-mono text-slate-600">
+            Loading packets...
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="flex items-center justify-center h-full text-[11px] font-mono text-slate-600">
+            No packets captured yet
+          </div>
+        ) : (
+          filtered.map((pkt, idx) => {
+            const style = getProtoStyle(pkt.protocol, pkt.flagged);
+            const isSelected = selected?.id === pkt.id;
+            return (
+              <div key={pkt.id}
+                onClick={() => setSelected(isSelected ? null : pkt)}
+                className="grid items-center px-2 py-0.5 cursor-pointer border-b text-[10px] font-mono transition-colors"
+                style={{
+                  gridTemplateColumns: "50px 140px 140px 70px 55px 65px 1fr",
+                  borderColor: "rgba(0,212,255,0.04)",
+                  background: isSelected ? "rgba(0,212,255,0.12)" : pkt.flagged ? "rgba(255,0,110,0.06)" : idx % 2 === 0 ? "rgba(0,0,0,0.2)" : "transparent",
+                }}>
+                <span className="text-slate-600">{pkt.id}</span>
+                <span className="text-cyan-300 truncate">{pkt.src_ip}</span>
+                <span className="text-slate-300 truncate">{pkt.dst_ip}</span>
+                <span>
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold"
+                    style={{ background: style.bg, color: style.color }}>
+                    {pkt.protocol}
+                  </span>
+                </span>
+                <span className="text-slate-400">{pkt.port}</span>
+                <span className="text-slate-500">{pkt.length} B</span>
+                <span className="text-slate-400 truncate">{getInfo(pkt)}</span>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Packet detail panel */}
+      {selected && (
+        <div className="border-t px-4 py-3" style={{ borderColor: "rgba(0,212,255,0.15)", background: "rgba(0,212,255,0.03)" }}>
+          <div className="text-[10px] font-mono text-cyan-400 mb-2 font-bold">PACKET DETAILS — #{selected.id}</div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { label: "Source IP",    value: selected.src_ip },
+              { label: "Destination", value: selected.dst_ip },
+              { label: "Protocol",    value: selected.protocol },
+              { label: "Port",        value: String(selected.port) },
+              { label: "Length",      value: `${selected.length} bytes` },
+              { label: "Status",      value: selected.status },
+              { label: "Flagged",     value: selected.flagged ? "⚠ YES" : "No" },
+              { label: "Timestamp",   value: selected.timestamp },
+            ].map(({ label, value }) => (
+              <div key={label} className="p-2 rounded" style={{ background: "rgba(0,0,0,0.3)", border: "1px solid rgba(0,212,255,0.08)" }}>
+                <div className="text-[9px] text-slate-600 uppercase tracking-wider mb-0.5">{label}</div>
+                <div className="text-[10px] font-mono text-slate-200" style={{ color: label === "Flagged" && selected.flagged ? "#ff006e" : undefined }}>
+                  {value}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Footer stats */}
+      <div className="flex items-center gap-4 px-4 py-2 border-t text-[10px] font-mono text-slate-600"
+        style={{ borderColor: "rgba(0,212,255,0.08)", background: "rgba(0,0,0,0.3)" }}>
+        <span>Showing {filtered.length} of {packets.length} captured</span>
+        <span className="text-red-400">{packets.filter(p => p.flagged).length} flagged</span>
+        {Object.entries(
+          packets.reduce((acc, p) => ({ ...acc, [p.protocol]: (acc[p.protocol] || 0) + 1 }), {} as Record<string, number>)
+        ).slice(0, 4).map(([proto, count]) => (
+          <span key={proto} style={{ color: PROTO_COLORS[proto]?.color || "#64748b" }}>{proto}: {count}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function NetworkMonitoringPage() {
   const [wsConnected,setWsConnected] = useState(false);
   const [toast,setToast]             = useState<{msg:string;type:"success"|"error"}|null>(null);
@@ -856,6 +1091,8 @@ export default function NetworkMonitoringPage() {
           <SystemHealth health={health}/>
         </div>
 
+        {/* Wireshark Live Packet Table */}
+        <PacketTable/>
         {/* Footer */}
         <div className="pt-2 pb-4 flex items-center justify-between text-[10px] font-mono text-slate-700">
           <span>CyGuardian-X v2.4.1 — NETWORK MONITORING MODULE</span>

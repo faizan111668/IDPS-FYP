@@ -84,7 +84,7 @@ function Navbar() {
             <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-cyan-400" style={{background:"rgba(0,212,255,0.2)"}}>A</div>
             <span className="text-[11px] font-mono text-slate-400 hidden sm:block">ADMIN</span>
           </div>
-          <a href="/login" className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 hover:text-red-400 transition-colors">
+          <a href="/logout" className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 hover:text-red-400 transition-colors">
             <LogOut size={13}/><span className="hidden sm:block">LOGOUT</span>
           </a>
           <button className="lg:hidden text-slate-400" onClick={()=>setMenuOpen(!menuOpen)}>
